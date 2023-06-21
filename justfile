@@ -1,4 +1,4 @@
 default:
-    nasm -felf64 -g -F dwarf -o ./main.o ./main.s
-    ld -o main ./main.o
+    nasm -felf64 -g -F dwarf -o ./main.o ./main.asm
+    ld ./main.o -o main
     ./main
