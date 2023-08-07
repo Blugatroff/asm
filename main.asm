@@ -634,43 +634,46 @@ operation_string: ; () -> ()
     push r13 ; ptr ast node
     sub rsp, 3072
 
-    mov rdi, ASCII_GREATER_THAN
-    call write_char_stdout
+    operation_string_loop:
+        mov rdi, ASCII_GREATER_THAN
+        call write_char_stdout
 
-    mov rdi, ASCII_SPACE
-    call write_char_stdout
+        mov rdi, ASCII_SPACE
+        call write_char_stdout
 
-    mov rdi, rsp    ; allocated buffer
-    mov rsi, 1024   ; first 1024 bytes
-    call read_stdin
-    
-    mov rdi, rsp  ; pointer to line
-    mov rsi, rax  ; length of line
-    mov rdx, rsp  ; allocated buffer
-    add rdx, 1024 ; ptr tokens
-    call lex
-    mov r12, rax  ; number of tokens
+        mov rdi, rsp    ; allocated buffer
+        mov rsi, 1024   ; first 1024 bytes
+        call read_stdin
 
-    mov rdi, rsp  ; allocated buffer
-    add rdi, 1024 ; ptr tokens
-    mov rsi, r12  ; number of tokens
-    mov rdx, rsp  ; allocated buffer
-    add rdx, 2048 ; ptr exprs
-    call parse
-    mov r13, rax  ; ptr ast node
+        mov rdi, rsp  ; pointer to line
+        mov rsi, rax  ; length of line
+        mov rdx, rsp  ; allocated buffer
+        add rdx, 1024 ; ptr tokens
+        call lex
+        mov r12, rax  ; number of tokens
 
-    mov rdi, r13  ; ptr ast node
-    call evaluate ; result in rax
+        mov rdi, rsp  ; allocated buffer
+        add rdi, 1024 ; ptr tokens
+        mov rsi, r12  ; number of tokens
+        mov rdx, rsp  ; allocated buffer
+        add rdx, 2048 ; ptr exprs
+        call parse
+        mov r13, rax  ; ptr ast node
 
-    mov rdi, rax
-    call write_i64_stdout
+        mov rdi, r13  ; ptr ast node
+        call evaluate ; result in rax
 
-    mov dil, ASCII_NEWLINE
-    call write_char_stdout
+        mov rdi, rax
+        call write_i64_stdout
 
+        mov dil, ASCII_NEWLINE
+        call write_char_stdout
+
+        jmp operation_string_loop
+
+    add rsp, 3072
     pop r13
     pop r12
-    add rsp, 3072
     ret
 
 %define SIZEOF_TOKEN 32
@@ -680,10 +683,10 @@ operation_string: ; () -> ()
 %define TOKEN_LEXEME_LEN 24
 
 %define TOKEN_TYPE_NUMBER 1
-%define TOKEN_TYPE_PLUS 2
-%define TOKEN_TYPE_MINUS 3
-%define TOKEN_TYPE_STAR 4
-%define TOKEN_TYPE_SLASH 5
+%define TOKEN_TYPE_PLUS ASCII_PLUS
+%define TOKEN_TYPE_MINUS ASCII_MINUS
+%define TOKEN_TYPE_STAR ASCII_STAR
+%define TOKEN_TYPE_SLASH ASCII_SLASH
 %define TOKEN_TYPE_LEFT_PAREN 6
 %define TOKEN_TYPE_RIGHT_PAREN 7
 
@@ -838,6 +841,8 @@ parse_token: ; (rdi: ptr str, rsi: len str, rdx: ptr token) -> ()
     cmp rax, 1
     je parse_token_number
 
+    jmp parse_token_failed
+
     parse_token_left_paren:
         mov qword [rdx + TOKEN_TYPE], TOKEN_TYPE_LEFT_PAREN
         jmp parse_token_end
@@ -868,8 +873,29 @@ parse_token: ; (rdi: ptr str, rsi: len str, rdx: ptr token) -> ()
     pop r12
     ret
     parse_token_failed:
-        mov rdi, 1
-        call exit
+    mov rdi, PARSING_FAILED
+    mov rsi, PARSING_FAILED_LEN
+    call write_stdout
+
+    push byte ASCII_COLON
+    push byte ASCII_SPACE
+    push byte ASCII_QUOTE
+    mov rdi, rsp
+    mov rsi, 3
+    call write_stdout
+    add rsp, 3
+
+    mov rdi, r12
+    mov rsi, r13
+    call write_stdout
+
+    mov rdi, ASCII_QUOTE
+    call write_char_stdout
+    mov rdi, ASCII_NEWLINE
+    call write_char_stdout
+
+    mov rdi, 1
+    call exit
 
 write_token_type_stdout: ; (rdi: token_type) -> ()
     cmp rdi, TOKEN_TYPE_NUMBER
@@ -1143,12 +1169,11 @@ parse_additive_expression: ; (rdi: ptr ptr tokens, rsi: ptr len tokens, rdx: ptr
 
         mov rdx, rax
         add rdx, SIZEOF_EXPR        ; new expr
+        
         mov r8, [r15 + TOKEN_TYPE]
         mov [rdx + EXPR_TYPE], r8
         mov [rdx + EXPR_LEFT], r14  ; expr
-        mov r8, r14
-        add r8, SIZEOF_EXPR
-        mov [rdx + EXPR_RIGHT], r8 ; right
+        mov [rdx + EXPR_RIGHT], rax ; right
 
         mov r14, rdx ; expr = new expr
 
@@ -1190,7 +1215,7 @@ parse_multiplicative_expression: ; (rdi: ptr ptr tokens, rsi: ptr len tokens, rd
 
         cmp r15, 0                                ; if next is null
         je parse_multiplicative_expression_return ; return
-
+       
         mov rdi, r15
         call is_multiplicative
         cmp rax, 0                                ; if next is not multiplicative
@@ -1213,13 +1238,13 @@ parse_multiplicative_expression: ; (rdi: ptr ptr tokens, rsi: ptr len tokens, rd
 
         mov rdx, rax
         add rdx, SIZEOF_EXPR        ; new expr
+
         mov r8, [r15 + TOKEN_TYPE]
         mov [rdx + EXPR_TYPE], r8
         mov [rdx + EXPR_LEFT], r14  ; expr
         mov [rdx + EXPR_RIGHT], rax ; right
 
         mov r14, rdx ; expr = new expr
-
         jmp parse_multiplicative_expression_loop
 
 
@@ -1282,6 +1307,7 @@ parse_primary_expression: ; (rdi: ptr ptr tokens, rsi: ptr len tokens, rdx: ptr 
 
         mov rax, r14
         add rax, SIZEOF_EXPR ; new
+ 
         mov qword [rax + EXPR_TYPE], EXPR_TYPE_GROUP
         mov [rax + EXPR_LEFT], r14             ; child
         jmp parse_primary_expression_return    ; return
@@ -1567,17 +1593,20 @@ run_calculator: ; (rdi: ptr calculator) -> ()
     push r13     ; ptr operation
     mov r12, rdi
 
-    mov rdi, r12
-    call print_operations
+    run_calculator_loop:
+        mov rdi, r12
+        call print_operations
 
-    mov rdi, r12
-    call choose_operation
-    mov r13, rax
+        mov rdi, r12
+        call choose_operation
+        mov r13, rax
 
-    mov rdi, r13
-    call print_chosen_operation
+        mov rdi, r13
+        call print_chosen_operation
+        
+        call [r13 + 16] ; function pointer in Operation struct
 
-    call [r13 + 16] ; function pointer in Operation struct
+        jmp run_calculator_loop
 
     pop r13
     pop r12
@@ -1656,10 +1685,6 @@ NUMBER_ONE db "Number 1", 0
 NUMBER_ONE_LEN equ $-NUMBER_ONE-1
 NUMBER_TWO db "Number 2", 0
 NUMBER_TWO_LEN equ $-NUMBER_TWO-1
-HEAP_ARRAY_INDEX_OUT_OF_BOUNDS db "heap_array index out of bounds!", 0
-HEAP_ARRAY_INDEX_OUT_OF_BOUNDS_LEN equ $-HEAP_ARRAY_INDEX_OUT_OF_BOUNDS-1
-HEAP_ARRAY_POP_EMPTY db "heap_array index out of bounds!", 0
-HEAP_ARRAY_POP_EMPTY_LEN equ $-HEAP_ARRAY_POP_EMPTY-1
 TOKEN_TYPE_NUMBER_STR db "TOKEN_TYPE_NUMBER", 0
 TOKEN_TYPE_NUMBER_STR_LEN equ $-TOKEN_TYPE_NUMBER_STR-1
 TOKEN_TYPE_LEFT_PAREN_STR db "TOKEN_TYPE_LEFT_PAREN", 0
